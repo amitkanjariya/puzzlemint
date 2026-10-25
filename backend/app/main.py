@@ -1,19 +1,22 @@
 import hmac
 import os
+from pathlib import Path
 from time import perf_counter
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .db import get_db
 from .engine import clue_text, generate, validate_game
-from .models import Hint, Personalization, Project, Puzzle, PuzzleDependency, ValidationRun
+from .export import create_html, create_pdf
+from .models import Export, Hint, Personalization, Project, Puzzle, PuzzleDependency, ValidationRun
 from .schemas import ProjectCreate, ProjectUpdate, PuzzleUpdate
 
 TOKEN = os.environ.get("PUZZLEMINT_TOKEN", "")
+EXPORT_ROOT = Path(os.environ.get("PUZZLEMINT_EXPORT_DIR", Path(__file__).resolve().parents[1] / "exports")).resolve()
 
 
 @asynccontextmanager
@@ -218,3 +221,56 @@ def update_puzzle(puzzle_id: str, payload: PuzzleUpdate, db: Session = Depends(g
     puzzle.validation_status = "unchecked"
     db.commit()
     return public_puzzle_data(puzzle)
+
+
+def export_ready(project: Project) -> list[dict]:
+    puzzles = [public_puzzle_data(puzzle) for puzzle in project.puzzles]
+    if project.status not in {"validated", "exported"} or validate_game(puzzles):
+        raise HTTPException(status_code=409, detail="Validate this adventure before exporting")
+    return puzzles
+
+
+def save_export(db: Session, project: Project, name: str, contents: bytes) -> dict:
+    directory = (EXPORT_ROOT / project.id).resolve()
+    if not directory.is_relative_to(EXPORT_ROOT):
+        raise HTTPException(status_code=400, detail="Invalid export path")
+    directory.mkdir(parents=True, exist_ok=True)
+    destination = directory / name
+    destination.write_bytes(contents)
+    record = Export(project_id=project.id, export_format=destination.suffix.lstrip("."), file_path=str(destination))
+    db.add(record)
+    db.flush()
+    return {"id": record.id, "path": str(destination), "download_url": f"/api/v1/exports/{record.id}/download"}
+
+
+@app.post("/api/v1/projects/{project_id}/export/html", dependencies=[Depends(authorize)])
+def export_html(project_id: str, db: Session = Depends(get_db)):
+    project = get_project(project_id, db)
+    puzzles = export_ready(project)
+    result = save_export(db, project, "adventure.html", create_html(project_data(project), puzzles).encode("utf-8"))
+    project.status = "exported"
+    db.commit()
+    return result
+
+
+@app.post("/api/v1/projects/{project_id}/export/pdf", dependencies=[Depends(authorize)])
+def export_pdf(project_id: str, db: Session = Depends(get_db)):
+    project = get_project(project_id, db)
+    puzzles = export_ready(project)
+    player, organizer = create_pdf(project_data(project), puzzles)
+    handout = save_export(db, project, "player-handout.pdf", player)
+    answer_key = save_export(db, project, "organizer-answer-key.pdf", organizer)
+    project.status = "exported"
+    db.commit()
+    return {"handout": handout, "answer_key": answer_key}
+
+
+@app.get("/api/v1/exports/{export_id}/download", dependencies=[Depends(authorize)])
+def download_export(export_id: str, db: Session = Depends(get_db)):
+    record = db.get(Export, export_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Export not found")
+    path = Path(record.file_path).resolve()
+    if not path.is_relative_to(EXPORT_ROOT) or not path.is_file():
+        raise HTTPException(status_code=404, detail="Export file is unavailable")
+    return FileResponse(path, filename=path.name)
