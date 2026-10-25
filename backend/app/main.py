@@ -1,5 +1,6 @@
 import hmac
 import os
+from time import perf_counter
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -8,8 +9,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .db import get_db
-from .models import Personalization, Project
-from .schemas import ProjectCreate, ProjectUpdate
+from .engine import clue_text, generate, validate_game
+from .models import Hint, Personalization, Project, Puzzle, PuzzleDependency, ValidationRun
+from .schemas import ProjectCreate, ProjectUpdate, PuzzleUpdate
 
 TOKEN = os.environ.get("PUZZLEMINT_TOKEN", "")
 
@@ -67,6 +69,30 @@ def project_data(project: Project) -> dict:
     }
 
 
+def puzzle_data(puzzle: Puzzle) -> dict:
+    return {
+        "id": puzzle.id,
+        "project_id": puzzle.project_id,
+        "type": puzzle.puzzle_type,
+        "title": puzzle.title,
+        "position": puzzle.position,
+        "difficulty": puzzle.difficulty,
+        "parameters": puzzle.parameters_json,
+        "solution": puzzle.solution_json,
+        "hints": [hint.content for hint in puzzle.hints],
+        "dependencies": [item.requires_puzzle_id for item in puzzle.dependencies],
+        "validation_status": puzzle.validation_status,
+    }
+
+
+def public_puzzle_data(puzzle: Puzzle) -> dict:
+    data = puzzle_data(puzzle)
+    data["parameters"] = {**data["parameters"]}
+    if data["type"] == "logic_grid":
+        data["parameters"]["clue_texts"] = [clue_text(clue) for clue in data["parameters"]["clues"]]
+    return data
+
+
 @app.get("/api/v1/health")
 def health():
     return {"status": "ok"}
@@ -112,3 +138,83 @@ def update_project(project_id: str, payload: ProjectUpdate, db: Session = Depend
 def delete_project(project_id: str, db: Session = Depends(get_db)):
     db.delete(get_project(project_id, db))
     db.commit()
+
+
+@app.post("/api/v1/projects/{project_id}/generate", dependencies=[Depends(authorize)])
+def generate_adventure(project_id: str, db: Session = Depends(get_db)):
+    project = get_project(project_id, db)
+    config = project_data(project)
+    specs = generate(config)
+    project.puzzles.clear()
+    db.flush()
+    previous = None
+    for spec in specs:
+        puzzle = Puzzle(
+            project=project,
+            puzzle_type=spec["type"],
+            title=spec["title"],
+            position=spec["position"],
+            difficulty=spec["difficulty"],
+            parameters_json=spec["parameters"],
+            solution_json=spec["solution"],
+            hints=[Hint(hint_level=index + 1, content=value) for index, value in enumerate(spec["hints"])],
+        )
+        db.add(puzzle)
+        db.flush()
+        if previous:
+            puzzle.dependencies.append(PuzzleDependency(requires_puzzle_id=previous.id))
+        previous = puzzle
+    project.status = "generated"
+    db.commit()
+    return {"project": project_data(project), "puzzles": [public_puzzle_data(p) for p in project.puzzles]}
+
+
+@app.get("/api/v1/projects/{project_id}/puzzles", dependencies=[Depends(authorize)])
+def list_puzzles(project_id: str, db: Session = Depends(get_db)):
+    return [public_puzzle_data(puzzle) for puzzle in get_project(project_id, db).puzzles]
+
+
+@app.post("/api/v1/projects/{project_id}/validate", dependencies=[Depends(authorize)])
+def validate_adventure(project_id: str, db: Session = Depends(get_db)):
+    project = get_project(project_id, db)
+    start = perf_counter()
+    errors = validate_game([puzzle_data(puzzle) for puzzle in project.puzzles])
+    invalid_ids = {error.get("puzzle_id") for error in errors}
+    for puzzle in project.puzzles:
+        puzzle.validation_status = "invalid" if puzzle.id in invalid_ids else "valid"
+    project.status = "validated" if not errors else "validation_failed"
+    run = ValidationRun(project_id=project.id, passed=not errors, error_count=len(errors), errors_json=errors, execution_time_ms=round((perf_counter() - start) * 1000))
+    db.add(run)
+    db.commit()
+    return {"passed": not errors, "errors": errors, "execution_time_ms": run.execution_time_ms, "status": project.status}
+
+
+@app.get("/api/v1/projects/{project_id}/quality", dependencies=[Depends(authorize)])
+def quality(project_id: str, db: Session = Depends(get_db)):
+    project = get_project(project_id, db)
+    latest = max(project.validation_runs, key=lambda run: run.created_at) if project.validation_runs else None
+    return {"status": project.status, "latest_validation": None if latest is None else {"passed": latest.passed, "errors": latest.errors_json, "execution_time_ms": latest.execution_time_ms}}
+
+
+@app.post("/api/v1/projects/{project_id}/preview", dependencies=[Depends(authorize)])
+def preview(project_id: str, db: Session = Depends(get_db)):
+    project = get_project(project_id, db)
+    return {"project": project_data(project), "puzzles": [public_puzzle_data(p) for p in project.puzzles]}
+
+
+@app.patch("/api/v1/puzzles/{puzzle_id}", dependencies=[Depends(authorize)])
+def update_puzzle(puzzle_id: str, payload: PuzzleUpdate, db: Session = Depends(get_db)):
+    puzzle = db.get(Puzzle, puzzle_id)
+    if puzzle is None:
+        raise HTTPException(status_code=404, detail="Puzzle not found")
+    values = payload.model_dump(exclude_unset=True)
+    if "title" in values:
+        puzzle.title = values["title"]
+    if "difficulty" in values:
+        puzzle.difficulty = values["difficulty"]
+    if "prompt" in values:
+        puzzle.parameters_json = {**puzzle.parameters_json, "story": values["prompt"]}
+    puzzle.project.status = "generated"
+    puzzle.validation_status = "unchecked"
+    db.commit()
+    return public_puzzle_data(puzzle)

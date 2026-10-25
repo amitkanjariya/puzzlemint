@@ -1,6 +1,6 @@
 # PuzzleMint
 
-PuzzleMint is a local-first creator for personalized puzzle adventures. The Flutter creator and Python API are developed in runnable increments; the current implementation has project persistence and API protection. Game generation and export are being built next.
+PuzzleMint is a local-first creator for personalized puzzle adventures. The Flutter creator and Python API are developed in runnable increments. The backend now persists projects, generates four puzzle families, and independently validates them. Creator integration and exports are being built next.
 
 ## Requirements
 
@@ -46,5 +46,6 @@ flutter analyze
 - FastAPI versioned local API with Pydantic input validation and a per-run bearer token.
 - SQLAlchemy relational models, SQLite foreign keys, and Alembic migration.
 - Separate project and personalization records; puzzle, dependency, hint, validation, and export tables are ready for the next increments.
+- Deterministic Caesar ciphers, three-digit locks, small logic grids, and exact-order timelines. Lock combinations, logic assignments, and timeline orders are enumerated independently to check uniqueness. A chain of dependencies connects the stages.
 
 Project data stays on the local machine. There is no telemetry. A local user with access to the computer can inspect the database, so this is not a security boundary against that user.
