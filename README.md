@@ -94,6 +94,7 @@ The Flutter data repository owns HTTP calls. Cubits own loading, success, and er
 - **Logic grid:** assign three people to three objects and places, select consistent clues, then enumerate all 36 possible full assignments to prove uniqueness.
 - **Sequence:** create a four-event order and prerequisite edges, then enumerate valid orders to prove there is exactly one.
 - **Adventure graph:** each chamber requires the previous chamber. Validation checks puzzle IDs, missing prerequisites, cycles, and whether every mandatory stage can become reachable. Generated status alone never unlocks export.
+- **Presentation checks:** hints are recalculated from the actual clue data; number-lock text must state the real equations; story text cannot reveal its chamber's answer in advance.
 - **Repair:** retry at most three deterministic candidates for each invalid puzzle, preserve other puzzles, then revalidate the whole adventure. Dependency graph defects require creator intervention.
 
 The API exposes `/api/v1/projects` CRUD, `/generate`, `/validate`, `/repair`, `/preview`, `/quality`, `/puzzles`, `/duplicate`, `/export/html`, `/export/pdf`, puzzle edit/regenerate, and authenticated export downloads. A successful validation run and its errors are stored in `validation_runs`.

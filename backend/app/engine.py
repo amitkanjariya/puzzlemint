@@ -37,6 +37,10 @@ def number_candidates(params: dict) -> list[str]:
     return matches
 
 
+def number_prompt(params: dict) -> str:
+    return "A three-digit lock guards the next room. The digits add to {sum}. The first minus the second is {first_minus_second}. The second minus the third is {second_minus_third}.".format(**params)
+
+
 def logic_candidates(clues: list[dict]) -> list[dict]:
     matches = []
     for object_perm in permutations(OBJECTS):
@@ -83,20 +87,18 @@ def _cipher(rng: Random, theme: str, position: int, difficulty: str) -> dict:
         "title": "The encoded inscription",
         "parameters": {"prompt": "Decode the inscription. It names the next lead.", "ciphertext": caesar(word, shift), "shift": shift},
         "solution": {"answer": word},
-        "hints": ["Each letter has been shifted through the alphabet.", f"Move each letter back by {shift} places.", "Wrap around from A to Z when moving backward."],
     }
 
 
 def _number(rng: Random, theme: str, position: int, difficulty: str) -> dict:
     a, b, c = rng.randint(2, 8), rng.randint(1, 8), rng.randint(0, 8)
     params = {"sum": a + b + c, "first_minus_second": a - b, "second_minus_third": b - c}
-    params["prompt"] = "A three-digit lock guards the next room. The digits add to {sum}. The first minus the second is {first_minus_second}. The second minus the third is {second_minus_third}.".format(**params)
+    params["prompt"] = number_prompt(params)
     return {
         "type": "number_lock",
         "title": "The three-digit lock",
         "parameters": params,
         "solution": {"answer": f"{a}{b}{c}"},
-        "hints": ["Call the digits A, B, and C.", f"Use A - B = {a-b} and B - C = {b-c}.", f"Their sum is {a+b+c}; the first digit cannot be zero."],
     }
 
 
@@ -131,7 +133,6 @@ def _logic(rng: Random, theme: str, position: int, difficulty: str) -> dict:
         "title": "The witnesses' clues",
         "parameters": {"prompt": f"Three witnesses each carried one object and visited one place. Use the clues to identify {featured}'s object and place. Enter them as OBJECT, PLACE.", "people": PEOPLE, "objects": OBJECTS, "places": PLACES, "clues": clues, "featured": featured},
         "solution": {"answer": f"{target['object'].upper()}, {target['place'].upper()}", "assignment": answer},
-        "hints": ["Every person, object, and place is used exactly once.", "Mark impossible pairings before selecting possible ones.", f"Focus on the clues involving {featured} and related objects."],
     }
 
 
@@ -144,11 +145,31 @@ def _sequence(rng: Random, theme: str, position: int, difficulty: str) -> dict:
         "title": "The recovered timeline",
         "parameters": {"prompt": "Put the four events in the only order that satisfies every before/after clue.", "items": shown, "edges": edges},
         "solution": {"answer": " | ".join(order), "order": order},
-        "hints": ["Find the event that has no earlier requirement.", "Follow the before/after arrows one step at a time.", f"The first event is: {order[0]}."],
     }
 
 
 FAMILIES = [_cipher, _number, _logic, _sequence]
+
+
+def expected_hints(puzzle: dict) -> list[str]:
+    kind, params, solution = puzzle["type"], puzzle["parameters"], puzzle["solution"]
+    if kind == "cipher":
+        return ["Each letter has been shifted through the alphabet.",
+            f"Move each letter back by {params['shift']} places.",
+            "Wrap around from A to Z when moving backward."]
+    if kind == "number_lock":
+        return ["Call the digits A, B, and C.",
+            f"Use A - B = {params['first_minus_second']} and B - C = {params['second_minus_third']}.",
+            f"Their sum is {params['sum']}; the first digit cannot be zero."]
+    if kind == "logic_grid":
+        return ["Every person, object, and place is used exactly once.",
+            "Mark impossible pairings before selecting possible ones.",
+            f"Focus on the clues involving {params['featured']} and related objects."]
+    if kind == "sequence":
+        return ["Find the event that has no earlier requirement.",
+            "Follow the before/after arrows one step at a time.",
+            f"The first event is: {solution['order'][0]}."]
+    return []
 
 
 def generate(config: dict) -> list[dict]:
@@ -162,18 +183,24 @@ def generate(config: dict) -> list[dict]:
             "The trail begins here. Each solved clue unlocks the next chamber."
             if index == 0 else f"The clue from chamber {index} unlocks this chamber."
         )
+        puzzle["hints"] = expected_hints(puzzle)
         puzzles.append(puzzle)
     return puzzles
 
 
 def validate_puzzle(puzzle: dict) -> list[dict]:
     errors = []
-    kind, params, solution = puzzle["type"], puzzle["parameters"], puzzle["solution"]
+    try:
+        kind, params, solution = puzzle["type"], puzzle["parameters"], puzzle["solution"]
+    except (KeyError, TypeError):
+        return [{"code": "INVALID_SCHEMA", "message": "Puzzle data is incomplete or malformed"}]
     try:
         if kind == "cipher":
             if not 1 <= params["shift"] <= 25 or caesar(params["ciphertext"], -params["shift"]) != normalize(solution["answer"]):
                 errors.append({"code": "INVALID_ANSWER", "message": "Cipher does not decode to its answer"})
         elif kind == "number_lock":
+            if params["prompt"] != number_prompt(params):
+                errors.append({"code": "MISSING_CLUE", "message": "Lock prompt does not match its numeric clues"})
             candidates = number_candidates(params)
             if not candidates:
                 errors.append({"code": "NO_VALID_SOLUTION", "message": "Lock clues have no solution"})
@@ -209,13 +236,30 @@ def validate_puzzle(puzzle: dict) -> list[dict]:
     except (KeyError, TypeError, ValueError, StopIteration, IndexError):
         errors.append({"code": "INVALID_SCHEMA", "message": "Puzzle data is incomplete or malformed"})
     hints = puzzle.get("hints", [])
-    if len(hints) != 3 or any(not isinstance(hint, str) or not hint.strip() for hint in hints):
-        errors.append({"code": "INVALID_HINT", "message": "Three nonempty hints are required"})
+    try:
+        valid_hints = hints == expected_hints(puzzle) and len(hints) == 3
+    except (KeyError, TypeError, IndexError):
+        valid_hints = False
+    if not valid_hints:
+        errors.append({"code": "INVALID_HINT", "message": "Hints do not match the puzzle's actual clues"})
+    story = params.get("story") if isinstance(params, dict) else None
+    answer = solution.get("answer") if isinstance(solution, dict) else None
+    if not isinstance(story, str) or not story.strip():
+        errors.append({"code": "INVALID_SCHEMA", "message": "Story transition is missing"})
+    elif isinstance(answer, str) and len(answer) >= 3 and normalize(answer) in normalize(story):
+        errors.append({"code": "STORY_CONSTRAINT_MISMATCH", "message": "Story reveals the answer before the chamber is solved"})
     return errors
 
 
 def validate_game(puzzles: list[dict]) -> list[dict]:
     errors = []
+    if not isinstance(puzzles, list) or any(
+        not isinstance(puzzle, dict) or not isinstance(puzzle.get("id"), str)
+        or not isinstance(puzzle.get("dependencies", []), list)
+        or any(not isinstance(item, str) for item in puzzle.get("dependencies", []))
+        for puzzle in puzzles
+    ):
+        return [{"code": "INVALID_SCHEMA", "message": "Adventure puzzle IDs and dependencies are malformed"}]
     ids = {puzzle["id"] for puzzle in puzzles}
     by_id = {puzzle["id"]: puzzle for puzzle in puzzles}
     if len(ids) != len(puzzles):

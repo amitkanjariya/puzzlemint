@@ -43,6 +43,19 @@ def test_logic_and_sequence_uniqueness():
     assert validate_puzzle(ambiguous)[0]["code"] == "MULTIPLE_SOLUTIONS"
 
 
+def test_hints_story_and_visible_lock_clues_are_checked():
+    cipher, number = generate(config())[:2]
+    cipher["hints"][1] = "Move each letter back by 1 place."
+    assert any(error["code"] == "INVALID_HINT" for error in validate_puzzle(cipher))
+    cipher = generate(config())[0]
+    cipher["parameters"]["story"] = f"The answer is {cipher['solution']['answer']}."
+    assert any(error["code"] == "STORY_CONSTRAINT_MISMATCH" for error in validate_puzzle(cipher))
+    number["parameters"]["prompt"] = "Guess a code."
+    assert any(error["code"] == "MISSING_CLUE" for error in validate_puzzle(number))
+    assert validate_puzzle({"type": "cipher"})[0]["code"] == "INVALID_SCHEMA"
+    assert validate_game([{"type": "cipher"}])[0]["code"] == "INVALID_SCHEMA"
+
+
 def test_graph_detects_cycle_and_missing_dependency():
     specs = generate(config())[:2]
     first, second = ({**spec, "id": str(index), "dependencies": []} for index, spec in enumerate(specs))
