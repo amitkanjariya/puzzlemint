@@ -1,30 +1,20 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:puzzlemint/main.dart';
+import 'package:puzzlemint/core/api_client.dart';
+import 'package:puzzlemint/features/projects/data/api_project_repository.dart';
+import 'package:puzzlemint/features/projects/presentation/project_cubits.dart';
+import 'package:puzzlemint/features/projects/presentation/screens.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
-
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
-
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+  testWidgets('local session screen explains how to connect', (tester) async {
+    final api = ApiClient();
+    await tester.pumpWidget(BlocProvider(
+      create: (_) => SessionCubit(api, ApiProjectRepository(api)),
+      child: const MaterialApp(home: ConnectionPage()),
+    ));
+    expect(find.text('PUZZLEMINT'), findsOneWidget);
+    expect(find.text('Session token'), findsOneWidget);
+    expect(find.text('Open studio'), findsOneWidget);
   });
 }

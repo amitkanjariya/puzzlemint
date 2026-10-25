@@ -143,6 +143,37 @@ def delete_project(project_id: str, db: Session = Depends(get_db)):
     db.commit()
 
 
+@app.post("/api/v1/projects/{project_id}/duplicate", status_code=201, dependencies=[Depends(authorize)])
+def duplicate_project(project_id: str, db: Session = Depends(get_db)):
+    source = get_project(project_id, db)
+    duplicate = Project(
+        title=f"{source.title} (copy)"[:120], theme=source.theme, occasion=source.occasion,
+        difficulty=source.difficulty, duration_minutes=source.duration_minutes,
+        puzzle_count=source.puzzle_count, random_seed=source.random_seed,
+        status="generated" if source.puzzles else "draft",
+        personalization=Personalization(player_alias=source.personalization.player_alias,
+            final_message=source.personalization.final_message,
+            custom_facts_json=source.personalization.custom_facts_json),
+    )
+    db.add(duplicate)
+    db.flush()
+    mapping = {}
+    for puzzle in source.puzzles:
+        copied = Puzzle(project=duplicate, puzzle_type=puzzle.puzzle_type, title=puzzle.title,
+            position=puzzle.position, difficulty=puzzle.difficulty,
+            parameters_json=puzzle.parameters_json, solution_json=puzzle.solution_json,
+            validation_status="unchecked",
+            hints=[Hint(hint_level=hint.hint_level, content=hint.content) for hint in puzzle.hints])
+        db.add(copied)
+        db.flush()
+        mapping[puzzle.id] = copied
+    for puzzle in source.puzzles:
+        for dependency in puzzle.dependencies:
+            mapping[puzzle.id].dependencies.append(PuzzleDependency(requires_puzzle_id=mapping[dependency.requires_puzzle_id].id))
+    db.commit()
+    return project_data(duplicate)
+
+
 @app.post("/api/v1/projects/{project_id}/generate", dependencies=[Depends(authorize)])
 def generate_adventure(project_id: str, db: Session = Depends(get_db)):
     project = get_project(project_id, db)
