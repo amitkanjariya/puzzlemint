@@ -1,17 +1,50 @@
-# puzzlemint
+# PuzzleMint
 
-A new Flutter project.
+PuzzleMint is a local-first creator for personalized puzzle adventures. The Flutter creator and Python API are developed in runnable increments; the current implementation has project persistence and API protection. Game generation and export are being built next.
 
-## Getting Started
+## Requirements
 
-This project is a starting point for a Flutter application.
+- Flutter 3.41.2 or newer compatible stable version
+- Python 3.12 or newer
+- Windows for the primary desktop target
 
-A few resources to get you started if this is your first Flutter project:
+All dependencies are free. The core product does not require a cloud account or paid API.
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+## Run locally
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+From the repository root:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python -m pip install -r backend\requirements-dev.txt
+.\.venv\Scripts\python -m alembic -c backend\alembic.ini upgrade head
+.\.venv\Scripts\python backend\run.py
+```
+
+The backend prints a new session token on startup and binds to `127.0.0.1:8765`. Send the token in `Authorization: Bearer <token>` for all project endpoints. It has no CORS origins enabled. The token is held in memory and is never committed to source control. Keep the API terminal open while using the creator.
+
+In another terminal:
+
+```powershell
+flutter pub get
+flutter run -d windows
+```
+
+The API uses `backend/puzzlemint.db` by default. Set `PUZZLEMINT_DATABASE_URL` to another SQLite URL when needed. Run Alembic migrations before starting a new database.
+
+## Verify
+
+```powershell
+python -m pytest backend\tests -q
+flutter test
+flutter analyze
+```
+
+## Current architecture
+
+- Flutter desktop creator, with Android and web project scaffolds for later adaptation.
+- FastAPI versioned local API with Pydantic input validation and a per-run bearer token.
+- SQLAlchemy relational models, SQLite foreign keys, and Alembic migration.
+- Separate project and personalization records; puzzle, dependency, hint, validation, and export tables are ready for the next increments.
+
+Project data stays on the local machine. There is no telemetry. A local user with access to the computer can inspect the database, so this is not a security boundary against that user.
