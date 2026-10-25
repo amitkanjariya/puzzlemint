@@ -64,6 +64,8 @@ abstract class ProjectRepository {
   Future<List<AdventurePuzzle>> puzzles(String id);
   Future<void> generate(String id);
   Future<Map<String, dynamic>> validate(String id);
+  Future<Map<String, dynamic>> repair(String id);
+  Future<AdventurePuzzle> regeneratePuzzle(String id);
   Future<Map<String, dynamic>> exportHtml(String id);
   Future<Map<String, dynamic>> exportPdf(String id);
   Future<AdventurePuzzle> updatePuzzle(String id, Map<String, dynamic> values);

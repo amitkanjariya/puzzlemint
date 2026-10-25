@@ -3,12 +3,12 @@
 import json
 from html import escape
 from io import BytesIO
-from pathlib import Path
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.utils import simpleSplit
 from reportlab.platypus import BaseDocTemplate, Frame, KeepTogether, PageBreak, PageTemplate, Paragraph, Spacer
 
 from .engine import clue_text
@@ -29,6 +29,9 @@ def _prompt_lines(puzzle: dict) -> list[str]:
     if puzzle["type"] == "cipher":
         lines.append(f"Inscription: {params['ciphertext']}")
     elif puzzle["type"] == "logic_grid":
+        lines.append(f"People: {', '.join(params['people'])}.")
+        lines.append(f"Objects: {', '.join(params['objects'])}.")
+        lines.append(f"Places: {', '.join(params['places'])}.")
         lines.extend(clue_text(clue) for clue in params["clues"])
     elif puzzle["type"] == "sequence":
         lines.extend(f"{left} must happen before {right}." for left, right in params["edges"])
@@ -41,7 +44,7 @@ def _draw_page(canvas, doc):
     canvas.line(42, A4[1] - 45, A4[0] - 42, A4[1] - 45)
     canvas.setFont("Helvetica", 9)
     canvas.setFillColor(colors.HexColor("#222844"))
-    canvas.drawString(42, 32, "PuzzleMint · Turn Any Occasion Into an Adventure")
+    canvas.drawString(42, 32, "PuzzleMint | Turn Any Occasion Into an Adventure")
     canvas.drawRightString(A4[0] - 42, 32, str(doc.page))
     canvas.restoreState()
 
@@ -55,12 +58,21 @@ def _pdf_document(project: dict, puzzles: list[dict], answer_key: bool) -> bytes
     styles["Title"].textColor = colors.HexColor("#14182E")
     styles["Heading2"].textColor = colors.HexColor("#222844")
     styles["BodyText"].leading = 16
-    body = [Paragraph(escape(project["title"]), styles["Title"]), Spacer(1, 16)]
-    body.append(Paragraph("Organizer answer key" if answer_key else intro(project), styles["BodyText"]))
-    body.append(Spacer(1, 20))
-    if not answer_key:
+    styles.add(ParagraphStyle(name="CoverLabel", parent=styles["BodyText"], alignment=TA_CENTER,
+        fontName="Helvetica-Bold", fontSize=10, textColor=colors.HexColor("#A27C3A"), spaceAfter=24))
+    styles.add(ParagraphStyle(name="CoverTitle", parent=styles["Title"], fontName="Times-Bold",
+        fontSize=32, leading=38, alignment=TA_CENTER))
+    if answer_key:
+        body = [Paragraph(escape(project["title"]), styles["Title"]), Spacer(1, 16),
+            Paragraph("Organizer answer key", styles["BodyText"]), Spacer(1, 20)]
+    else:
+        body = [Spacer(1, 70), Paragraph("PUZZLEMINT PRESENTS", styles["CoverLabel"]),
+            Paragraph(escape(project["title"]), styles["CoverTitle"]), Spacer(1, 28),
+            Paragraph(escape(intro(project)), styles["BodyText"]), Spacer(1, 36)]
         body.append(Paragraph("Solve each chamber in order. Write answers before moving on. Keep the answer key with the organizer.", styles["BodyText"]))
         body.append(Spacer(1, 20))
+        body.append(Paragraph(f"MADE FOR {escape(project['player_alias']).upper()}  |  {escape(project['occasion']).upper()}  |  {project['duration_minutes']} MINUTES", styles["CoverLabel"]))
+        body.append(PageBreak())
     for index, puzzle in enumerate(puzzles, start=1):
         section = [Paragraph(f"{index}. {escape(puzzle['title'])}", styles["Heading2"]), Spacer(1, 8)]
         if answer_key:
@@ -70,7 +82,10 @@ def _pdf_document(project: dict, puzzles: list[dict], answer_key: bool) -> bytes
             section.extend(Paragraph(escape(line), styles["BodyText"]) for line in _prompt_lines(puzzle))
             section.extend([Spacer(1, 18), Paragraph("Answer: ______________________________________________", styles["BodyText"])])
         body.append(KeepTogether(section))
-        body.append(Spacer(1, 22))
+        if not answer_key and index < len(puzzles):
+            body.append(PageBreak())
+        else:
+            body.append(Spacer(1, 22))
     if not answer_key:
         body.extend([PageBreak(), Paragraph("Adventure complete", styles["Title"]), Spacer(1, 18), Paragraph(escape(project["final_message"]), styles["BodyText"])])
     document.build(body)
@@ -99,9 +114,12 @@ input,select{background:#12172d;border:1px solid #69718b;border-radius:8px;paddi
 table{border-collapse:collapse;width:100%;margin:16px 0}th,td{padding:10px;border-bottom:1px solid #434c68;text-align:left}table select{min-width:100px;width:100%}
 @media(max-width:600px){header{padding:16px}.shell{padding:28px 16px}.card{padding:20px}th,td{padding:5px;font-size:14px}table select{min-width:70px}}
 @media(prefers-reduced-motion:reduce){.progress span{transition:none}}
+body[data-theme="agent"]{background:#0d1a22}body[data-theme="agent"] .card{background:#172c38;border-color:#365665}body[data-theme="agent"] button:not(.secondary){background:#7bd8c8}
+body[data-theme="library"]{background:#2b2333}body[data-theme="library"] .card{background:#3b3041;border-color:#72566d}body[data-theme="library"] button:not(.secondary){background:#d9b56d}
 </style></head><body><header><div class="brand">PUZZLEMINT</div><div id="step"></div></header><main class="shell" id="app"></main>
 <script type="application/json" id="game-data">__DATA__</script><script>
 const game=JSON.parse(document.getElementById('game-data').textContent);
+document.body.dataset.theme=game.project.theme;
 const app=document.getElementById('app'),step=document.getElementById('step');
 const key='puzzlemint:'+game.project.id;
 let state={started:false,nickname:'',completed:[],attempts:{},hints:{},finished:false};

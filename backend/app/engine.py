@@ -96,7 +96,7 @@ def _number(rng: Random, theme: str, position: int, difficulty: str) -> dict:
         "title": "The three-digit lock",
         "parameters": params,
         "solution": {"answer": f"{a}{b}{c}"},
-        "hints": ["Call the digits A, B, and C.", f"Use A − B = {a-b} and B − C = {b-c}.", f"Their sum is {a+b+c}; the first digit cannot be zero."],
+        "hints": ["Call the digits A, B, and C.", f"Use A - B = {a-b} and B - C = {b-c}.", f"Their sum is {a+b+c}; the first digit cannot be zero."],
     }
 
 

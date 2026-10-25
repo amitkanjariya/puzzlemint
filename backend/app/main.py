@@ -5,12 +5,13 @@ from time import perf_counter
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .db import get_db
-from .engine import clue_text, generate, validate_game
+from .engine import clue_text, generate, validate_game, validate_puzzle
 from .export import create_html, create_pdf
 from .models import Export, Hint, Personalization, Project, Puzzle, PuzzleDependency, ValidationRun
 from .schemas import ProjectCreate, ProjectUpdate, PuzzleUpdate
@@ -27,6 +28,10 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="PuzzleMint Local API", version="0.1.0", lifespan=lifespan, docs_url=None, redoc_url=None)
+allowed_origins = [origin.strip() for origin in os.environ.get("PUZZLEMINT_CORS_ORIGINS", "").split(",") if origin.strip()]
+if allowed_origins:
+    app.add_middleware(CORSMiddleware, allow_origins=allowed_origins, allow_methods=["GET", "POST", "PATCH", "DELETE"],
+        allow_headers=["Authorization", "Content-Type"])
 
 
 @app.middleware("http")
@@ -252,6 +257,57 @@ def update_puzzle(puzzle_id: str, payload: PuzzleUpdate, db: Session = Depends(g
     puzzle.validation_status = "unchecked"
     db.commit()
     return public_puzzle_data(puzzle)
+
+
+def replace_puzzle_content(db: Session, puzzle: Puzzle, spec: dict) -> None:
+    puzzle.puzzle_type = spec["type"]
+    puzzle.title = spec["title"]
+    puzzle.parameters_json = spec["parameters"]
+    puzzle.solution_json = spec["solution"]
+    puzzle.validation_status = "unchecked"
+    puzzle.hints.clear()
+    db.flush()
+    puzzle.hints.extend(Hint(hint_level=index + 1, content=value) for index, value in enumerate(spec["hints"]))
+
+
+def regenerated_spec(project: Project, position: int, attempt: int) -> dict:
+    config = project_data(project)
+    config["random_seed"] = (project.random_seed + (position + 1) * 1009 + attempt * 7919) % 2147483647
+    return generate(config)[position]
+
+
+@app.post("/api/v1/puzzles/{puzzle_id}/regenerate", dependencies=[Depends(authorize)])
+def regenerate_puzzle(puzzle_id: str, db: Session = Depends(get_db)):
+    puzzle = db.get(Puzzle, puzzle_id)
+    if puzzle is None:
+        raise HTTPException(status_code=404, detail="Puzzle not found")
+    spec = regenerated_spec(puzzle.project, puzzle.position, 0)
+    if validate_puzzle(spec):
+        raise HTTPException(status_code=422, detail="Unable to generate a valid replacement")
+    replace_puzzle_content(db, puzzle, spec)
+    puzzle.project.status = "generated"
+    db.commit()
+    return public_puzzle_data(puzzle)
+
+
+@app.post("/api/v1/projects/{project_id}/repair", dependencies=[Depends(authorize)])
+def repair_adventure(project_id: str, db: Session = Depends(get_db)):
+    project = get_project(project_id, db)
+    errors = validate_game([puzzle_data(puzzle) for puzzle in project.puzzles])
+    invalid_ids = {error.get("puzzle_id") for error in errors if error.get("puzzle_id")}
+    repaired = []
+    for puzzle in project.puzzles:
+        if puzzle.id not in invalid_ids:
+            continue
+        for attempt in range(3):
+            candidate = regenerated_spec(project, puzzle.position, attempt)
+            if not validate_puzzle(candidate):
+                replace_puzzle_content(db, puzzle, candidate)
+                repaired.append(puzzle.id)
+                break
+    db.flush()
+    result = validate_adventure(project_id, db)
+    return {**result, "repaired_puzzle_ids": repaired, "attempt_limit_per_puzzle": 3}
 
 
 def export_ready(project: Project) -> list[dict]:

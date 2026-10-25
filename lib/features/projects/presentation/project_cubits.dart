@@ -172,11 +172,11 @@ class DetailState {
   final Map<String, dynamic>? validation;
 
   DetailState copy({AdventureProject? project, List<AdventurePuzzle>? puzzles, bool? loading,
-    bool? busy, String? error, String? notice, Map<String, dynamic>? validation}) => DetailState(
+    bool? busy, String? error, String? notice, Map<String, dynamic>? validation, bool clearValidation = false}) => DetailState(
       project: project ?? this.project, puzzles: puzzles ?? this.puzzles,
       loading: loading ?? this.loading, busy: busy ?? this.busy,
       error: error ?? this.error, notice: notice ?? this.notice,
-      validation: validation ?? this.validation);
+      validation: clearValidation ? null : validation ?? this.validation);
 }
 
 class DetailCubit extends Cubit<DetailState> {
@@ -205,6 +205,20 @@ class DetailCubit extends Cubit<DetailState> {
     final result = await _repository.validate(id);
     await load();
     emit(state.copy(validation: result, notice: result['passed'] == true ? 'Every puzzle and dependency passed validation.' : 'Validation found issues. Review the report below.'));
+  });
+
+  Future<void> repair() => _act(() async {
+    final result = await _repository.repair(id);
+    await load();
+    emit(state.copy(validation: result, notice: result['passed'] == true
+      ? 'Invalid puzzles were repaired and the full adventure passed validation.'
+      : 'Repair reached its attempt limit. Review the remaining issues.'));
+  });
+
+  Future<void> regeneratePuzzle(String puzzleId) => _act(() async {
+    await _repository.regeneratePuzzle(puzzleId);
+    await load();
+    emit(state.copy(clearValidation: true, notice: 'Chamber replaced. Revalidate before exporting.'));
   });
 
   Future<void> exportHtml() => _act(() async {

@@ -318,6 +318,8 @@ class DetailPage extends StatelessWidget {
             if (state.puzzles.isNotEmpty) ...[
               ElevatedButton.icon(onPressed: state.busy ? null : cubit.validate,
                 icon: const Icon(Icons.verified_outlined), label: const Text('Run validation')),
+              if (project.status == 'validation_failed') OutlinedButton.icon(onPressed: state.busy ? null : cubit.repair,
+                icon: const Icon(Icons.healing_outlined), label: const Text('Repair issues')),
               OutlinedButton.icon(onPressed: state.busy ? null : () => _confirmRegenerate(context, cubit),
                 icon: const Icon(Icons.refresh), label: const Text('Regenerate all')),
               OutlinedButton.icon(onPressed: state.busy || !{'validated', 'exported'}.contains(project.status) ? null : cubit.exportHtml,
@@ -340,7 +342,9 @@ class DetailPage extends StatelessWidget {
           const SizedBox(height: 6), const Text('Every chamber depends on the one before it. Inspect clues and edit presentation text here.'),
           const SizedBox(height: 14),
           if (state.puzzles.isEmpty) const Card(child: Padding(padding: EdgeInsets.all(30), child: Text('This draft has no puzzles yet. Generate an adventure to begin.'))),
-          for (final puzzle in state.puzzles) _PuzzleCard(puzzle: puzzle, onEdit: () => _editPuzzle(context, cubit, puzzle)),
+          for (final puzzle in state.puzzles) _PuzzleCard(puzzle: puzzle,
+            onEdit: () => _editPuzzle(context, cubit, puzzle),
+            onRegenerate: () => _confirmReplace(context, cubit, puzzle)),
         ],
       ]))));
   }));
@@ -367,12 +371,21 @@ class DetailPage extends StatelessWidget {
     if (saved == true) await cubit.editPuzzle(puzzle.id, title.text, story.text);
     title.dispose(); story.dispose();
   }
+
+  Future<void> _confirmReplace(BuildContext context, DetailCubit cubit, AdventurePuzzle puzzle) async {
+    final confirmed = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
+      title: const Text('Replace this chamber?'),
+      content: Text('Replace “${puzzle.title}” with a fresh valid puzzle. Other chambers will stay as they are.'),
+      actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+        FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Replace'))]));
+    if (confirmed == true) await cubit.regeneratePuzzle(puzzle.id);
+  }
 }
 
 class _PuzzleCard extends StatelessWidget {
-  const _PuzzleCard({required this.puzzle, required this.onEdit});
+  const _PuzzleCard({required this.puzzle, required this.onEdit, required this.onRegenerate});
   final AdventurePuzzle puzzle;
-  final VoidCallback onEdit;
+  final VoidCallback onEdit, onRegenerate;
 
   @override
   Widget build(BuildContext context) => Card(margin: const EdgeInsets.only(bottom: 12), child: ExpansionTile(
@@ -391,7 +404,10 @@ class _PuzzleCard extends StatelessWidget {
         style: const TextStyle(color: MintColors.muted)),
       const SizedBox(height: 10), for (var index = 0; index < puzzle.hints.length; index++)
         Text('Hint ${index + 1}: ${puzzle.hints[index]}'),
-      const SizedBox(height: 12), OutlinedButton.icon(onPressed: onEdit, icon: const Icon(Icons.edit_outlined), label: const Text('Edit title and story')),
+      const SizedBox(height: 12), Wrap(spacing: 8, runSpacing: 8, children: [
+        OutlinedButton.icon(onPressed: onEdit, icon: const Icon(Icons.edit_outlined), label: const Text('Edit title and story')),
+        OutlinedButton.icon(onPressed: onRegenerate, icon: const Icon(Icons.autorenew), label: const Text('Replace puzzle')),
+      ]),
     ],
   ));
 

@@ -32,6 +32,9 @@ def test_rejects_invalid_input_and_unauthorized_request(client):
     response = client.get("/api/v1/projects", headers={"Authorization": "Bearer wrong"})
     assert response.status_code == 401
     assert client.post("/api/v1/projects", content=b"x" * 65537).status_code == 413
+    project_id = client.post("/api/v1/projects", json=config()).json()["id"]
+    assert client.patch(f"/api/v1/projects/{project_id}", json={"title": None}).status_code == 422
+    assert client.patch(f"/api/v1/projects/{project_id}", json={"title": "   "}).status_code == 422
 
 
 def test_duplicate_preserves_puzzles_but_requires_new_validation(client):

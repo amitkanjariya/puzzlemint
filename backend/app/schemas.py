@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 Theme = Literal["museum", "agent", "library"]
@@ -38,8 +38,24 @@ class ProjectUpdate(BaseModel):
     player_alias: str | None = Field(default=None, min_length=1, max_length=60)
     final_message: str | None = Field(default=None, min_length=1, max_length=500)
 
+    @model_validator(mode="after")
+    def no_null_or_blank(self):
+        for name in self.model_fields_set:
+            value = getattr(self, name)
+            if value is None or isinstance(value, str) and not value.strip():
+                raise ValueError(f"{name} must not be empty")
+        return self
+
 
 class PuzzleUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=3, max_length=120)
     difficulty: Difficulty | None = None
     prompt: str | None = Field(default=None, min_length=5, max_length=1000)
+
+    @model_validator(mode="after")
+    def no_null_or_blank(self):
+        for name in self.model_fields_set:
+            value = getattr(self, name)
+            if value is None or isinstance(value, str) and not value.strip():
+                raise ValueError(f"{name} must not be empty")
+        return self

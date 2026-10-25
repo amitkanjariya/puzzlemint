@@ -36,6 +36,13 @@ class ApiProjectRepository implements ProjectRepository {
   Future<Map<String, dynamic>> validate(String id) async => Map<String, dynamic>.from(await _api.post('/projects/$id/validate') as Map);
 
   @override
+  Future<Map<String, dynamic>> repair(String id) async => Map<String, dynamic>.from(await _api.post('/projects/$id/repair') as Map);
+
+  @override
+  Future<AdventurePuzzle> regeneratePuzzle(String id) async => AdventurePuzzle.fromJson(
+    Map<String, dynamic>.from(await _api.post('/puzzles/$id/regenerate') as Map));
+
+  @override
   Future<Map<String, dynamic>> exportHtml(String id) async => Map<String, dynamic>.from(await _api.post('/projects/$id/export/html') as Map);
 
   @override

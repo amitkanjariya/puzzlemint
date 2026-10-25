@@ -3,6 +3,8 @@ from copy import deepcopy
 from app.engine import caesar, generate, logic_candidates, normalize, number_candidates, order_candidates, validate_game, validate_puzzle
 
 from test_projects import config
+from app.db import get_db
+from app.models import Puzzle
 
 
 def test_all_four_families_are_generated_and_valid():
@@ -11,6 +13,16 @@ def test_all_four_families_are_generated_and_valid():
     assert {spec["type"] for spec in specs} == {"cipher", "number_lock", "logic_grid", "sequence"}
     assert specs == generate(config())
     assert all(validate_puzzle(spec) == [] for spec in specs)
+
+
+def test_many_seeds_keep_unique_solutions():
+    for theme in ("museum", "agent", "library"):
+        for count in (4, 6, 8):
+            for seed in range(5):
+                specs = generate({"theme": theme, "difficulty": "hard", "puzzle_count": count, "random_seed": seed})
+                puzzles = [{**spec, "id": str(index), "dependencies": [] if index == 0 else [str(index - 1)]}
+                    for index, spec in enumerate(specs)]
+                assert validate_game(puzzles) == []
 
 
 def test_cipher_and_number_solvers_detect_invalid_answers():
@@ -56,3 +68,23 @@ def test_api_generate_validate_and_edit(client):
     assert edited.status_code == 200
     assert client.get(f"/api/v1/projects/{project_id}").json()["status"] == "generated"
     assert client.post(f"/api/v1/projects/{project_id}/validate").json()["passed"] is True
+
+
+def test_bounded_repair_preserves_unaffected_puzzles(client):
+    project_id = client.post("/api/v1/projects", json=config()).json()["id"]
+    original = client.post(f"/api/v1/projects/{project_id}/generate").json()["puzzles"]
+    damaged_id = original[1]["id"]
+    session_generator = client.app.dependency_overrides[get_db]()
+    session = next(session_generator)
+    damaged = session.get(Puzzle, damaged_id)
+    damaged.solution_json = {"answer": "999"}
+    session.commit()
+    session_generator.close()
+    assert not client.post(f"/api/v1/projects/{project_id}/validate").json()["passed"]
+    repaired = client.post(f"/api/v1/projects/{project_id}/repair").json()
+    assert repaired["passed"] is True
+    assert repaired["repaired_puzzle_ids"] == [damaged_id]
+    after = client.get(f"/api/v1/projects/{project_id}/puzzles").json()
+    assert after[0]["solution"] == original[0]["solution"]
+    assert after[2]["solution"] == original[2]["solution"]
+    assert after[1]["solution"]["answer"] != "999"
